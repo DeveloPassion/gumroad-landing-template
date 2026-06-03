@@ -28,10 +28,13 @@ Options:
 | `--out <file>` | `dist/<slug>.html` | output path |
 | `--ref <git-ref>` | `main` | store-website branch/tag to read |
 | `--store <owner/repo>` | `DeveloPassion/store-website` | source repo |
-| `--site <url>` | `https://store.dsebastien.net` | base for absolute asset/link URLs |
+| `--site <url>` | `https://store.dsebastien.net` | base for absolute link URLs |
+| `--cover <url>` | (none) | the product's **own Gumroad cover** for the hero (`gumroad products view <id>` → `.product.covers[0].url`). Needed for a hero image — external/store image hosts are blocked live. |
 | `--template <file>` | `./template.html` | brand shell |
 
 No dependencies. Node ≥ 18 (global `fetch`).
+
+> **Images:** the live page is sandboxed and can't load external image hosts, so the renderer emits **no** store `/assets` images — pass the product's own cover via `--cover`, and media reduces to YouTube link-outs. For richer visuals, inline `data:` URIs or CSS.
 
 ## Publishing to Gumroad
 

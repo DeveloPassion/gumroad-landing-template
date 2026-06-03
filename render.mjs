@@ -44,6 +44,11 @@ const STORE = opt('store', 'DeveloPassion/store-website');
 const SITE = opt('site', 'https://store.dsebastien.net').replace(/\/$/, '');
 const OUT = opt('out', `dist/${slug}.html`);
 const TEMPLATE = opt('template', join(__dir, 'template.html'));
+// The live Gumroad page is sandboxed: external image hosts are blocked. Pass the product's OWN
+// Gumroad cover URL (from `gumroad products view <id>` → .product.covers[0].url, on
+// public-files.gumroad.com) via --cover so the hero image actually loads. Store-website
+// /assets images are external and are therefore omitted from the output.
+const COVER = opt('cover', '');
 const RAW = `https://raw.githubusercontent.com/${STORE}/${REF}/src/data/products`;
 
 // ---- fetch helpers ----
@@ -86,13 +91,13 @@ const cards3 = (items, render) =>
   `<div class="grid md:grid-cols-3 gap-5">${items.map(render).join('')}</div>`;
 
 // ---- builders (each returns '' when its data is absent) ----
-function buildHero(p, sc, media) {
-  const cover = (media || []).find((m) => m.group === 'cover' || m.type === 'image');
+function buildHero(p, sc, coverUrl) {
   const tagline = sc.tagline || p.name;
   const sub = sc.secondaryTagline || sc.description || p.shortDescription || '';
   const price = p.priceDisplay || (p.price != null ? `€${p.price}` : '');
-  const img = cover
-    ? `<img src="${abs(cover.url)}" alt="${esc(cover.altText || p.name)}" class="max-w-full rounded-2xl mt-10 mx-auto shadow-2xl">`
+  // Only the product's own Gumroad cover (passed via --cover) — external hosts are blocked live.
+  const img = coverUrl
+    ? `<img src="${esc(coverUrl)}" alt="${esc(p.name)}" class="max-w-full rounded-2xl mt-10 mx-auto shadow-2xl">`
     : '';
   const badges = Array.isArray(sc.trustBadges) && sc.trustBadges.length
     ? `<div class="flex flex-wrap gap-3 justify-center mt-6">${sc.trustBadges
@@ -183,13 +188,9 @@ function buildAudience(sc) {
 }
 
 function buildMediaGallery(media) {
-  const imgs = (media || []).filter((m) => m.type === 'image' && m.group !== 'cover');
+  // Store-website /assets images are external (blocked live), so only YouTube link-outs are emitted.
   const yts = (media || []).filter((m) => m.youtubeId);
-  if (!imgs.length && !yts.length) return '';
-  const imgHtml = imgs
-    .map((m) => `<img src="${abs(m.url)}" alt="${esc(m.altText || m.title || '')}">`)
-    .join('');
-  // Link out to YouTube (an embedded iframe would depend on Gumroad allowing it; a link always works).
+  if (!yts.length) return '';
   const ytHtml = yts
     .map(
       (m) =>
@@ -282,7 +283,7 @@ async function main() {
 
   // section order mirrors store-website product.tsx
   const content = [
-    buildHero(product, sc, media),
+    buildHero(product, sc, COVER),
     buildPAS(sc),
     buildStory(sc),
     sc.howItWorks ? buildList('How it works', sc.howItWorks) : '',
