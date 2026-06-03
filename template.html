@@ -5,18 +5,20 @@
   fills the {{HEAD_*}} / {{BUY_*}} tokens from store-website product data.
   Brand tokens mirror DeveloPassion/store-website src/styles/index.css (dark theme).
 
-  SANITIZER NOTE: Gumroad sanitizes custom HTML server-side and may strip <script>
-  (including the Tailwind CDN). The inline <style> base layer keeps the page dark,
-  branded and legible if that happens. Always check .sanitization_report after
-  `gumroad products page preview`. No JS beyond the Tailwind runtime.
+  SANITIZER NOTE (verified against Gumroad CLI v0.17.0): the sanitizer KEEPS <script>
+  (incl. the Tailwind CDN), <style>, class/style attributes, data-gumroad-* and CSS
+  like scroll-snap. It only removes non-allowlisted <head> tags (charset/viewport/
+  title/meta). The inline <style> base layer is belt-and-suspenders. Always re-check
+  .sanitization_report after `gumroad products page preview`; the allowlist can change.
 -->
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{HEAD_TITLE}}</title>
-<meta name="description" content="{{HEAD_DESCRIPTION}}">
-
+<!--
+  No <meta>/<title> here on purpose: Gumroad strips non-allowlisted <head> tags
+  (charset, viewport, title, meta description) and provides its own around the
+  embedded HTML, so the sanitization report comes back clean (0 removed).
+  <script> and <style> ARE kept by the sanitizer (verified) — Tailwind works live.
+-->
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
@@ -42,6 +44,14 @@
          box-shadow:0 8px 24px rgba(229,0,125,.35); transition:transform .12s ease; }
   .btn:hover { transform:translateY(-2px); }
   .card { background:#3f4957; border:1px solid rgba(255,255,255,.1); border-radius:16px; padding:28px; }
+  /* Pure-CSS scroll-snap carousel (no JS — verified to survive Gumroad sanitizer) */
+  .carousel { display:flex; gap:16px; overflow-x:auto; scroll-snap-type:x mandatory;
+              -webkit-overflow-scrolling:touch; padding:4px 0 12px; scroll-padding-left:0; }
+  .carousel > * { scroll-snap-align:start; flex:0 0 85%; }
+  @media (min-width:600px) { .carousel > * { flex-basis:48%; } }
+  .carousel::-webkit-scrollbar { height:8px; }
+  .carousel::-webkit-scrollbar-thumb { background:rgba(255,255,255,.2); border-radius:8px; }
+  .carousel img { width:100%; height:100%; object-fit:cover; border-radius:16px; }
   .buybar { position:fixed; left:0; right:0; bottom:0; background:rgba(47,55,66,.96);
             border-top:1px solid rgba(255,255,255,.12); padding:12px 20px; z-index:50;
             display:flex; align-items:center; justify-content:center; gap:16px; flex-wrap:wrap; }
@@ -54,7 +64,7 @@
 
 <!-- Sticky buy bar (pure CSS, no JS) -->
 <div class="buybar">
-  <span class="font-bold">{{BUY_NAME}} — <span data-gumroad-field="price">{{BUY_PRICE}}</span></span>
+  <span class="font-bold">{{BUY_NAME}} &mdash; <span data-gumroad-field="price">{{BUY_PRICE}}</span></span>
   <a class="btn" data-gumroad-action="buy">{{BUY_CTA}}</a>
 </div>
 

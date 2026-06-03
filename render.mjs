@@ -102,7 +102,7 @@ function buildHero(p, sc, media) {
   return `<section class="text-center px-5 pt-24 pb-16"><div class="max-w-3xl mx-auto">
     <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight mb-4" data-gumroad-field="name">${esc(tagline)}</h1>
     <p class="text-lg md:text-xl text-white/70 max-w-2xl mx-auto mb-7">${md(sub)}</p>
-    <a class="btn" data-gumroad-action="buy">Get it now — <span data-gumroad-field="price">${esc(price)}</span></a>
+    <a class="btn" data-gumroad-action="buy">Get it now &mdash; <span data-gumroad-field="price">${esc(price)}</span></a>
     ${badges}${img}
   </div></section>`;
 }
@@ -187,18 +187,18 @@ function buildMediaGallery(media) {
   const yts = (media || []).filter((m) => m.youtubeId);
   if (!imgs.length && !yts.length) return '';
   const imgHtml = imgs
-    .map((m) => `<img src="${abs(m.url)}" alt="${esc(m.altText || m.title || '')}" class="rounded-xl w-full">`)
+    .map((m) => `<img src="${abs(m.url)}" alt="${esc(m.altText || m.title || '')}">`)
     .join('');
-  // iframes are stripped by the sanitizer — link out to YouTube instead.
+  // Link out to YouTube (an embedded iframe would depend on Gumroad allowing it; a link always works).
   const ytHtml = yts
     .map(
       (m) =>
-        `<a href="https://www.youtube.com/watch?v=${esc(m.youtubeId)}" class="card block text-center !text-white">▶ ${esc(
+        `<a href="https://www.youtube.com/watch?v=${esc(m.youtubeId)}" class="card flex items-center justify-center text-center !text-white">▶ ${esc(
           m.title || 'Watch the video'
         )}</a>`
     )
     .join('');
-  return section(`${h2('See it in action')}<div class="grid md:grid-cols-2 gap-4">${imgHtml}${ytHtml}</div>`);
+  return section(`${h2('See it in action')}<div class="carousel">${imgHtml}${ytHtml}</div>`);
 }
 
 function buildIncluded(p, children) {
@@ -213,7 +213,7 @@ function buildIncluded(p, children) {
       }${c.shortDescription ? `<p class="text-white/70 mt-1">${md(c.shortDescription)}</p>` : ''}</div>`;
     })
     .join('');
-  return section(`${h2("What's included")}<div class="grid md:grid-cols-2 gap-5">${cards}</div>`);
+  return section(`${h2("What's included")}<div class="carousel">${cards}</div>`);
 }
 
 function buildTestimonials(rows) {
@@ -228,7 +228,7 @@ function buildTestimonials(rows) {
         )}${x.role ? `, ${esc(x.role)}` : ''}${x.company ? ` (${esc(x.company)})` : ''}</p></div>`
     )
     .join('');
-  return section(`${h2('What people say')}<div class="grid md:grid-cols-2 gap-5">${cards}</div>`);
+  return section(`${h2('What people say')}<div class="carousel">${cards}</div>`);
 }
 
 function buildFaq(rows) {
@@ -254,7 +254,7 @@ function buildFinalCta(p, sc) {
       : '';
   return `<section class="px-5 py-16 text-center"><div class="max-w-3xl mx-auto">
     ${h2(`Ready? ${esc(headline)}`)}${guarantees}
-    <a class="btn" data-gumroad-action="buy">Get it now — <span data-gumroad-field="price">${esc(price)}</span></a>
+    <a class="btn" data-gumroad-action="buy">Get it now &mdash; <span data-gumroad-field="price">${esc(price)}</span></a>
   </div></section>`;
 }
 
@@ -307,8 +307,6 @@ async function main() {
   const price = product.priceDisplay || (product.price != null ? `€${product.price}` : '');
   let html = await readFile(TEMPLATE, 'utf8');
   html = html
-    .replace('{{HEAD_TITLE}}', esc(sc.metaTitle || product.name))
-    .replace('{{HEAD_DESCRIPTION}}', esc(sc.metaDescription || sc.description || product.shortDescription || ''))
     .replace('{{BUY_NAME}}', esc(product.name))
     .replace('{{BUY_PRICE}}', esc(price))
     .replace('{{BUY_CTA}}', 'Buy now')
