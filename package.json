@@ -1,0 +1,14 @@
+{
+  "name": "gumroad-landing-template",
+  "version": "1.0.0",
+  "description": "Brand-aligned generator for Gumroad custom HTML landing pages, sourced from DeveloPassion/store-website.",
+  "type": "module",
+  "bin": { "gumroad-landing": "render.mjs" },
+  "scripts": {
+    "render": "node render.mjs"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT",
+  "author": "Sébastien Dubois (DeveloPassion)",
+  "repository": { "type": "git", "url": "https://github.com/DeveloPassion/gumroad-landing-template.git" }
+}

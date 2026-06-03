@@ -1,0 +1,325 @@
+#!/usr/bin/env node
+/**
+ * Gumroad landing-page renderer for DeveloPassion / Knowii products.
+ *
+ * Single source of truth: DeveloPassion/store-website (PUBLIC) — product data,
+ * sales copy, testimonials, FAQ, media, and included-product lists all live there
+ * under src/data/products/. This script fetches that data from GitHub raw, binds it
+ * into template.html, and emits ONE self-contained, sanitizer-safe HTML file ready
+ * for `gumroad products page publish`.
+ *
+ * Usage:
+ *   node render.mjs <product-slug> [options]
+ *   node render.mjs journaling-deep-dive --out dist/journaling-deep-dive.html
+ *
+ * Options:
+ *   --out <file>     output path (default: dist/<slug>.html)
+ *   --ref <git-ref>  store-website ref to read from (default: main)
+ *   --store <owner/repo>  store repo (default: DeveloPassion/store-website)
+ *   --site <url>     store site for absolute asset/link URLs (default: https://store.dsebastien.net)
+ *   --template <file>  template shell (default: ./template.html next to this script)
+ *
+ * No dependencies. Node >= 18 (global fetch). Never emits JS beyond the Tailwind runtime.
+ */
+
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dirname, resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dir = dirname(fileURLToPath(import.meta.url));
+
+// ---- args ----
+const argv = process.argv.slice(2);
+const slug = argv.find((a) => !a.startsWith('--'));
+const opt = (name, def) => {
+  const i = argv.indexOf(`--${name}`);
+  return i !== -1 && argv[i + 1] ? argv[i + 1] : def;
+};
+if (!slug) {
+  console.error('Usage: node render.mjs <product-slug> [--out f] [--ref main] [--store o/r] [--site url]');
+  process.exit(1);
+}
+const REF = opt('ref', 'main');
+const STORE = opt('store', 'DeveloPassion/store-website');
+const SITE = opt('site', 'https://store.dsebastien.net').replace(/\/$/, '');
+const OUT = opt('out', `dist/${slug}.html`);
+const TEMPLATE = opt('template', join(__dir, 'template.html'));
+const RAW = `https://raw.githubusercontent.com/${STORE}/${REF}/src/data/products`;
+
+// ---- fetch helpers ----
+async function getJson(file) {
+  const url = `${RAW}/${file}`;
+  const res = await fetch(url);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Fetch ${url} -> ${res.status}`);
+  return res.json();
+}
+
+// ---- text / markdown ----
+const esc = (s) =>
+  String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Minimal inline markdown used in the store copy: **bold**, *italic*, `code`, [text](url).
+// Relative /product and /assets links are rewritten to absolute store URLs.
+function md(s) {
+  let t = esc(s);
+  t = t.replace(/\[([^\]]+)\]\((\/[^)]+|https?:\/\/[^)]+)\)/g, (_, txt, url) => {
+    const abs = url.startsWith('/') ? `${SITE}${url}` : url;
+    return `<a href="${abs}">${txt}</a>`;
+  });
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  t = t.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+  t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+  return t;
+}
+const abs = (u) => (u && u.startsWith('/') ? `${SITE}${u}` : u);
+
+// ---- section helpers ----
+const section = (inner, cls = '') =>
+  inner ? `<section class="px-5 py-16 ${cls}"><div class="max-w-3xl mx-auto">${inner}</div></section>` : '';
+const h2 = (t) => `<h2 class="text-3xl font-extrabold tracking-tight text-center mb-8">${esc(t)}</h2>`;
+const ul = (arr, cls = '') =>
+  Array.isArray(arr) && arr.length
+    ? `<ul class="space-y-2 ${cls}">${arr.map((x) => `<li class="text-white/80">${md(x)}</li>`).join('')}</ul>`
+    : '';
+const cards3 = (items, render) =>
+  `<div class="grid md:grid-cols-3 gap-5">${items.map(render).join('')}</div>`;
+
+// ---- builders (each returns '' when its data is absent) ----
+function buildHero(p, sc, media) {
+  const cover = (media || []).find((m) => m.group === 'cover' || m.type === 'image');
+  const tagline = sc.tagline || p.name;
+  const sub = sc.secondaryTagline || sc.description || p.shortDescription || '';
+  const price = p.priceDisplay || (p.price != null ? `€${p.price}` : '');
+  const img = cover
+    ? `<img src="${abs(cover.url)}" alt="${esc(cover.altText || p.name)}" class="max-w-full rounded-2xl mt-10 mx-auto shadow-2xl">`
+    : '';
+  const badges = Array.isArray(sc.trustBadges) && sc.trustBadges.length
+    ? `<div class="flex flex-wrap gap-3 justify-center mt-6">${sc.trustBadges
+        .map((b) => `<span class="card !py-2 !px-4 text-sm text-white/80">${md(b)}</span>`)
+        .join('')}</div>`
+    : '';
+  return `<section class="text-center px-5 pt-24 pb-16"><div class="max-w-3xl mx-auto">
+    <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight mb-4" data-gumroad-field="name">${esc(tagline)}</h1>
+    <p class="text-lg md:text-xl text-white/70 max-w-2xl mx-auto mb-7">${md(sub)}</p>
+    <a class="btn" data-gumroad-action="buy">Get it now — <span data-gumroad-field="price">${esc(price)}</span></a>
+    ${badges}${img}
+  </div></section>`;
+}
+
+function buildPAS(sc) {
+  const block = (label, color, text, points) => {
+    if (!text && !(points && points.length)) return '';
+    return `<div class="card mb-4 border-l-4" style="border-left-color:${color}">
+      <h3 class="text-xl font-bold mb-2">${esc(label)}</h3>
+      ${text ? `<p class="text-white/80 mb-3">${md(text)}</p>` : ''}${ul(points)}
+    </div>`;
+  };
+  const inner =
+    block('The problem', '#ef4444', sc.problem, sc.problemPoints) +
+    block('Why it hurts', '#f59e0b', sc.agitate, sc.agitatePoints) +
+    block('The solution', '#10b981', sc.solution, sc.solutionPoints);
+  return inner.trim() ? section(inner) : '';
+}
+
+function buildStory(sc) {
+  const txt = sc.credibilityStory || sc.storytelling;
+  if (!txt) return '';
+  return section(`<div class="card"><p class="text-white/80">${md(txt)}</p></div>`);
+}
+
+function buildList(title, arr, opts = {}) {
+  if (!Array.isArray(arr) || !arr.length) return '';
+  const items = arr
+    .map((x) =>
+      typeof x === 'object'
+        ? `<li class="text-white/80"><strong>${md(x.item || x.title || x.myth || '')}</strong>${
+            x.description || x.truth ? ` — ${md(x.description || x.truth)}` : ''
+          }</li>`
+        : `<li class="text-white/80">${md(x)}</li>`
+    )
+    .join('');
+  return section(`${h2(title)}<ul class="space-y-2 max-w-2xl mx-auto">${items}</ul>`, opts.cls);
+}
+
+function buildBenefits(sc) {
+  const b = sc.benefits;
+  if (!b || typeof b !== 'object') return '';
+  const cols = [
+    ['Right away', b.immediate],
+    ['As you go', b.systematic],
+    ['Long term', b.longTerm],
+  ].filter(([, v]) => Array.isArray(v) && v.length);
+  if (!cols.length) return '';
+  const inner = cards3(cols, ([label, items]) =>
+    `<div class="card"><h3 class="text-xl font-bold mb-3 text-brand-text">${esc(label)}</h3>${ul(items)}</div>`
+  );
+  return section(`${h2('What you gain')}${inner}`);
+}
+
+function buildTransformation(sc) {
+  const t = sc.transformation;
+  if (!t || (!t.before && !t.after)) return '';
+  const col = (label, arr, color) =>
+    `<div class="card"><h3 class="text-xl font-bold mb-3" style="color:${color}">${esc(label)}</h3>${ul(arr)}</div>`;
+  return section(
+    `${h2('Before & after')}<div class="grid md:grid-cols-2 gap-5">${col('Before', t.before, '#ef4444')}${col(
+      'After',
+      t.after,
+      '#10b981'
+    )}</div>`
+  );
+}
+
+function buildAudience(sc) {
+  const col = (label, arr, color) =>
+    Array.isArray(arr) && arr.length
+      ? `<div class="card"><h3 class="text-xl font-bold mb-3" style="color:${color}">${esc(label)}</h3>${ul(arr)}</div>`
+      : '';
+  const left = col('Perfect for you if…', sc.perfectFor || sc.targetAudience, '#10b981');
+  const right = col('Not for you if…', sc.notForYou, '#ef4444');
+  if (!left && !right) return '';
+  return section(`${h2('Is this for you?')}<div class="grid md:grid-cols-2 gap-5">${left}${right}</div>`);
+}
+
+function buildMediaGallery(media) {
+  const imgs = (media || []).filter((m) => m.type === 'image' && m.group !== 'cover');
+  const yts = (media || []).filter((m) => m.youtubeId);
+  if (!imgs.length && !yts.length) return '';
+  const imgHtml = imgs
+    .map((m) => `<img src="${abs(m.url)}" alt="${esc(m.altText || m.title || '')}" class="rounded-xl w-full">`)
+    .join('');
+  // iframes are stripped by the sanitizer — link out to YouTube instead.
+  const ytHtml = yts
+    .map(
+      (m) =>
+        `<a href="https://www.youtube.com/watch?v=${esc(m.youtubeId)}" class="card block text-center !text-white">▶ ${esc(
+          m.title || 'Watch the video'
+        )}</a>`
+    )
+    .join('');
+  return section(`${h2('See it in action')}<div class="grid md:grid-cols-2 gap-4">${imgHtml}${ytHtml}</div>`);
+}
+
+function buildIncluded(p, children) {
+  if (!children || !children.length) return '';
+  const cards = children
+    .map((c) => {
+      if (!c) return '';
+      const price = c.priceDisplay || (c.price != null ? `€${c.price}` : '');
+      const href = c.dsebastienUrl || c.gumroadUrl || `${SITE}/product/${c.id}`;
+      return `<div class="card"><h3 class="text-lg font-bold mb-1"><a href="${href}">${esc(c.name)}</a></h3>${
+        price ? `<p class="text-brand-text font-bold">${esc(price)} value</p>` : ''
+      }${c.shortDescription ? `<p class="text-white/70 mt-1">${md(c.shortDescription)}</p>` : ''}</div>`;
+    })
+    .join('');
+  return section(`${h2("What's included")}<div class="grid md:grid-cols-2 gap-5">${cards}</div>`);
+}
+
+function buildTestimonials(rows) {
+  const t = (rows || []).filter((x) => x.quote);
+  if (!t.length) return '';
+  const cards = t
+    .slice(0, 9)
+    .map(
+      (x) =>
+        `<div class="card"><p class="text-white">“${esc(x.quote)}”</p><p class="text-white/60 mt-3">— ${esc(
+          x.author
+        )}${x.role ? `, ${esc(x.role)}` : ''}${x.company ? ` (${esc(x.company)})` : ''}</p></div>`
+    )
+    .join('');
+  return section(`${h2('What people say')}<div class="grid md:grid-cols-2 gap-5">${cards}</div>`);
+}
+
+function buildFaq(rows) {
+  const f = (rows || []).filter((x) => x.question);
+  if (!f.length) return '';
+  const items = f
+    .map(
+      (x) =>
+        `<details class="card mb-3"><summary class="font-bold cursor-pointer">${esc(
+          x.question
+        )}</summary><p class="text-white/80 mt-3">${md(x.answer)}</p></details>`
+    )
+    .join('');
+  return section(`${h2('Questions')}${items}`);
+}
+
+function buildFinalCta(p, sc) {
+  const price = p.priceDisplay || (p.price != null ? `€${p.price}` : '');
+  const headline = sc.tagline || p.name;
+  const guarantees =
+    Array.isArray(sc.guarantees) && sc.guarantees.length
+      ? `<div class="max-w-xl mx-auto mb-7">${ul(sc.guarantees, 'text-left')}</div>`
+      : '';
+  return `<section class="px-5 py-16 text-center"><div class="max-w-3xl mx-auto">
+    ${h2(`Ready? ${esc(headline)}`)}${guarantees}
+    <a class="btn" data-gumroad-action="buy">Get it now — <span data-gumroad-field="price">${esc(price)}</span></a>
+  </div></section>`;
+}
+
+// ---- main ----
+async function main() {
+  const product = await getJson(`${slug}.json`);
+  if (!product) throw new Error(`Product "${slug}" not found in ${STORE}@${REF}`);
+  const copyId = product.activeSalesCopyId || 'default';
+  const [salesRaw, testRaw, faqRaw, mediaRaw] = await Promise.all([
+    getJson(`${slug}-sales-copy-${copyId}.json`),
+    getJson(`${slug}-testimonials.json`),
+    getJson(`${slug}-faq.json`),
+    getJson(`${slug}-media.json`),
+  ]);
+  const sc = (salesRaw && salesRaw.salesCopy) || {};
+  const testimonials = (testRaw && testRaw.data) || [];
+  const faq = (faqRaw && faqRaw.data) || [];
+  const media = (mediaRaw && mediaRaw.data) || [];
+
+  // resolve included products (bundles)
+  let children = [];
+  if (Array.isArray(product.includedProducts) && product.includedProducts.length) {
+    children = await Promise.all(product.includedProducts.map((s) => getJson(`${s}.json`)));
+  }
+
+  // section order mirrors store-website product.tsx
+  const content = [
+    buildHero(product, sc, media),
+    buildPAS(sc),
+    buildStory(sc),
+    sc.howItWorks ? buildList('How it works', sc.howItWorks) : '',
+    buildList('Highlights', sc.highlights),
+    buildList('What you get', sc.whatYouGet),
+    sc.courseContent ? buildList("What's inside", sc.courseContent) : '',
+    buildBenefits(sc),
+    buildTransformation(sc),
+    sc.timeline ? buildList('Your timeline', sc.timeline) : '',
+    buildList('Common misconceptions', sc.misconceptionBusters),
+    buildAudience(sc),
+    sc.adhdBenefit ? section(`<div class="card"><p class="text-white/80">${md(sc.adhdBenefit)}</p></div>`) : '',
+    buildMediaGallery(media),
+    buildIncluded(product, children),
+    buildTestimonials(testimonials),
+    buildFaq(faq),
+    buildFinalCta(product, sc),
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const price = product.priceDisplay || (product.price != null ? `€${product.price}` : '');
+  let html = await readFile(TEMPLATE, 'utf8');
+  html = html
+    .replace('{{HEAD_TITLE}}', esc(sc.metaTitle || product.name))
+    .replace('{{HEAD_DESCRIPTION}}', esc(sc.metaDescription || sc.description || product.shortDescription || ''))
+    .replace('{{BUY_NAME}}', esc(product.name))
+    .replace('{{BUY_PRICE}}', esc(price))
+    .replace('{{BUY_CTA}}', 'Buy now')
+    .replace('<!--PAGE_CONTENT-->', content);
+
+  await mkdir(dirname(resolve(OUT)), { recursive: true });
+  await writeFile(OUT, html, 'utf8');
+  console.log(`Wrote ${OUT} (${html.length} bytes) for ${slug} from ${STORE}@${REF}`);
+}
+
+main().catch((e) => {
+  console.error('render failed:', e.message);
+  process.exit(1);
+});

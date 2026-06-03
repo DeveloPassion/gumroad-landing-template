@@ -1,0 +1,62 @@
+<!doctype html>
+<!--
+  Knowii / DeveloPassion Gumroad landing-page shell.
+  The render script (render.mjs) injects per-section HTML at the PAGE_CONTENT slot and
+  fills the {{HEAD_*}} / {{BUY_*}} tokens from store-website product data.
+  Brand tokens mirror DeveloPassion/store-website src/styles/index.css (dark theme).
+
+  SANITIZER NOTE: Gumroad sanitizes custom HTML server-side and may strip <script>
+  (including the Tailwind CDN). The inline <style> base layer keeps the page dark,
+  branded and legible if that happens. Always check .sanitization_report after
+  `gumroad products page preview`. No JS beyond the Tailwind runtime.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{HEAD_TITLE}}</title>
+<meta name="description" content="{{HEAD_DESCRIPTION}}">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: { extend: {
+      colors: {
+        brand: '#e5007d', 'brand-text': '#ff1493',
+        bg: '#37404c', surface: '#3f4957', 'surface-elev': '#475363',
+        problem: '#ef4444', agitate: '#f59e0b', solution: '#10b981',
+      },
+      fontFamily: { sans: ['Noto Sans','system-ui','-apple-system','Segoe UI','Roboto','sans-serif'] },
+    } },
+  };
+</script>
+
+<style>
+  body { margin:0; background:#37404c; color:#fff;
+         font-family:'Noto Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+         line-height:1.6; -webkit-font-smoothing:antialiased; padding-bottom:88px; }
+  a { color:#ff1493; }
+  strong { color:#fff; font-weight:700; }
+  .btn { display:inline-block; background:#e5007d; color:#fff; text-decoration:none;
+         font-weight:700; padding:16px 34px; border-radius:999px;
+         box-shadow:0 8px 24px rgba(229,0,125,.35); transition:transform .12s ease; }
+  .btn:hover { transform:translateY(-2px); }
+  .card { background:#3f4957; border:1px solid rgba(255,255,255,.1); border-radius:16px; padding:28px; }
+  .buybar { position:fixed; left:0; right:0; bottom:0; background:rgba(47,55,66,.96);
+            border-top:1px solid rgba(255,255,255,.12); padding:12px 20px; z-index:50;
+            display:flex; align-items:center; justify-content:center; gap:16px; flex-wrap:wrap; }
+</style>
+</head>
+
+<body class="font-sans bg-bg text-white">
+
+<!--PAGE_CONTENT-->
+
+<!-- Sticky buy bar (pure CSS, no JS) -->
+<div class="buybar">
+  <span class="font-bold">{{BUY_NAME}} — <span data-gumroad-field="price">{{BUY_PRICE}}</span></span>
+  <a class="btn" data-gumroad-action="buy">{{BUY_CTA}}</a>
+</div>
+
+</body>
+</html>
