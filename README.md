@@ -30,11 +30,24 @@ Options:
 | `--store <owner/repo>` | `DeveloPassion/store-website` | source repo |
 | `--site <url>` | `https://store.dsebastien.net` | base for absolute link URLs |
 | `--cover <url>` | (none) | the product's **own Gumroad cover** for the hero (`gumroad products view <id>` → `.product.covers[0].url`). Needed for a hero image — external/store image hosts are blocked live. |
+| `--local <path>` | (none) | read product data from a local store-website checkout instead of GitHub raw (renders copy that isn't pushed yet) |
+| `--media-map <file>` | (none) | JSON mapping store media URL basenames (e.g. `"osk-ai-base.webp"`) to the product's **own** Gumroad asset URLs — enables a real screenshot gallery (see below) |
 | `--template <file>` | `./template.html` | brand shell |
 
 No dependencies. Node ≥ 18 (global `fetch`).
 
-> **Images:** the live page is sandboxed and can't load external image hosts, so the renderer emits **no** store `/assets` images — pass the product's own cover via `--cover`, and media reduces to YouTube link-outs. For richer visuals, inline `data:` URIs or CSS.
+> **Sandbox rules (verified live):** the page can't load external image hosts AND can't navigate
+> to external links — `<a href>` to YouTube/store/anywhere is dead. The renderer therefore:
+> **(1)** flattens all markdown links in copy to plain text, **(2)** emits no YouTube link-outs,
+> **(3)** renders a screenshot gallery only from images mapped via `--media-map` to the product's
+> own assets. To build that map, upload screenshots as product covers (max **8 covers** per
+> product, JPEG/PNG/GIF only — no WebP):
+>
+> ```sh
+> gumroad products covers add <id> --image ./screenshot.png --json --jq '.result.covers[-1].url'
+> ```
+>
+> then map each store media basename to the returned `public-files.gumroad.com` URL.
 
 ## Publishing to Gumroad
 
