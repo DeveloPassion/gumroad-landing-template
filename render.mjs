@@ -60,6 +60,13 @@ const LOCAL = opt('local', '');
 const MEDIA_MAP_FILE = opt('media-map', '');
 // Sandbox blocks outbound links, so the channel is surfaced as copyable TEXT, not an anchor.
 const YOUTUBE = opt('youtube', '');
+// ⚠ YouTube embeds do NOT work despite frame-src allowing youtube-nocookie: the page's
+// sandbox lacks allow-same-origin, that restriction propagates into nested iframes, and the
+// YouTube player JS crashes (writeEmbed undefined, cache SecurityError). Verified live.
+// Videos are therefore surfaced as a copyable-text list. Number of videos to list:
+const LIST_VIDEOS = parseInt(opt('videos', '3'), 10) || 0;
+// Max testimonials to render (0 = all). Social proof at full strength by default.
+const TESTIMONIALS = parseInt(opt('testimonials', '0'), 10) || 0;
 const RAW = `https://raw.githubusercontent.com/${STORE}/${REF}/src/data/products`;
 
 // ---- fetch helpers ----
@@ -350,34 +357,48 @@ function buildAudience(sc) {
 }
 
 function buildMediaGallery(media, mediaMap = {}) {
-  // The Gumroad sandbox blocks external image hosts AND external link navigation:
-  // - store /assets images can't load and YouTube link-outs are dead → neither is emitted
-  // - only images mapped (by URL basename) to the product's OWN Gumroad assets are rendered
+  // Verified live CSP: img-src allows ALL of public-files.gumroad.com, frame-src allows
+  // YouTube embeds — but <a> navigation to external sites is still blocked. So:
+  // - first EMBED_VIDEOS youtube entries become real embedded players
+  // - images mapped (by URL basename) to product-hosted Gumroad URLs render in a grid
+  // - the channel is surfaced as copyable text (links would be dead)
+  const vidItems = (media || [])
+    .filter((m) => m.youtubeId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .slice(0, LIST_VIDEOS)
+    .map(
+      (m) =>
+        `<li class="text-white/80">▶ <strong>${esc(m.title || 'Video')}</strong><br>
+         <code class="text-brand-text font-bold">youtu.be/${esc(m.youtubeId)}</code></li>`
+    )
+    .join('');
   const imgs = (media || [])
     .filter((m) => m.type === 'image' && m.url)
     .map((m) => ({ m, gum: mediaMap[m.url.split('/').pop()] }))
     .filter((x) => x.gum)
     .sort((a, b) => (a.m.order ?? 0) - (b.m.order ?? 0));
-  if (!imgs.length) return '';
-  const cards = imgs
-    .map(
-      ({ m, gum }) =>
-        `<figure class="card !p-3" style="margin:0"><img src="${esc(gum)}" alt="${esc(
-          m.altText || m.title || ''
-        )}" loading="lazy">${
-          m.title
-            ? `<figcaption class="text-white/70 text-sm mt-2 text-center">${esc(m.title)}</figcaption>`
-            : ''
-        }</figure>`
-    )
-    .join('');
-  // The sandbox can't link out, so the channel is shown as copyable text people can type.
-  const yt = YOUTUBE
-    ? `<div class="card text-center mt-6"><p class="text-white/90 font-bold mb-1">▶ Want full video walkthroughs?</p>
-       <p class="text-white/75">Find me on YouTube: <code class="text-brand-text font-bold">${esc(YOUTUBE)}</code></p>
-       <p class="text-white/50 text-sm mt-1">(type it in your browser — this page can't link out)</p></div>`
+  const shots = imgs.length
+    ? `<div class="shots">${imgs
+        .map(
+          ({ m, gum }) =>
+            `<figure><img src="${esc(gum)}" alt="${esc(m.altText || m.title || '')}" loading="lazy">${
+              m.title
+                ? `<figcaption class="text-white/70 text-sm mt-2 text-center">${esc(m.title)}</figcaption>`
+                : ''
+            }</figure>`
+        )
+        .join('')}</div>`
     : '';
-  return section(`${h2('See it in action')}<div class="carousel">${cards}</div>${yt}`);
+  const yt =
+    vidItems || YOUTUBE
+      ? `<div class="card mt-6 text-center">
+       <p class="text-white/90 font-bold mb-3">▶ Watch the video walkthroughs</p>
+       ${vidItems ? `<ul class="space-y-3 mb-4" style="list-style:none;padding:0">${vidItems}</ul>` : ''}
+       ${YOUTUBE ? `<p class="text-white/75">Many more on my channel: <code class="text-brand-text font-bold">${esc(YOUTUBE)}</code></p>` : ''}
+       <p class="text-white/50 text-sm mt-2">(type the address in your browser — this page can't link out)</p></div>`
+      : '';
+  if (!shots && !yt) return '';
+  return section(`${h2('See it in action')}${shots}${yt}`);
 }
 
 function buildIncluded(p, children) {
@@ -396,18 +417,26 @@ function buildIncluded(p, children) {
 }
 
 function buildTestimonials(rows) {
-  const t = (rows || []).filter((x) => x.quote);
+  // ALL testimonials in a masonry column layout (social proof is the point — don't truncate
+  // unless --testimonials caps it), stars on every card, featured ones get a brand border.
+  let t = (rows || []).filter((x) => x.quote);
   if (!t.length) return '';
+  if (TESTIMONIALS > 0) t = t.slice(0, TESTIMONIALS);
   const cards = t
-    .slice(0, 9)
     .map(
       (x) =>
-        `<div class="card"><p class="text-white">“${esc(x.quote)}”</p><p class="text-white/60 mt-3">— ${esc(
-          x.author
-        )}${x.role ? `, ${esc(x.role)}` : ''}${x.company ? ` (${esc(x.company)})` : ''}</p></div>`
+        `<div class="card t-card${x.featured ? ' t-featured' : ''}">
+          <p class="text-amber-400 tracking-widest mb-2">★★★★★</p>
+          <p class="text-white">“${esc(x.quote)}”</p>
+          <p class="text-white/60 mt-3">— ${esc(x.author)}${x.role ? `, ${esc(x.role)}` : ''}${
+            x.company ? ` (${esc(x.company)})` : ''
+          }</p></div>`
     )
     .join('');
-  return section(`${h2('What people say')}<div class="carousel">${cards}</div>`);
+  // wider container than section() — three masonry columns need the room
+  return `<section class="px-5 py-16"><div class="max-w-5xl mx-auto">${h2(
+    'What people say'
+  )}<div class="t-cols">${cards}</div></div></section>`;
 }
 
 function buildFaq(rows) {

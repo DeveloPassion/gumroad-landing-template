@@ -33,6 +33,8 @@ Options:
 | `--local <path>` | (none) | read product data from a local store-website checkout instead of GitHub raw (renders copy that isn't pushed yet) |
 | `--media-map <file>` | (none) | JSON mapping store media URL basenames (e.g. `"osk-ai-base.webp"`) to the product's **own** Gumroad asset URLs — enables a real screenshot gallery (see below) |
 | `--youtube <text>` | (none) | YouTube channel shown as **copyable text** in the gallery section (e.g. `youtube.com/@dsebastien`) — the sandbox can't link out, so discovery happens via text |
+| `--videos <n>` | `3` | number of store videos listed as copyable `youtu.be/<id>` text in the gallery card |
+| `--testimonials <n>` | `0` (all) | cap the testimonial masonry wall |
 | `--template <file>` | `./template.html` | brand shell |
 
 No dependencies. Node ≥ 18 (global `fetch`).
@@ -49,6 +51,15 @@ No dependencies. Node ≥ 18 (global `fetch`).
 > ```
 >
 > then map each store media basename to the returned `public-files.gumroad.com` URL.
+>
+> **More image slots beyond the 8-cover cap:** the live CSP allows `img-src` for the WHOLE
+> `public-files.gumroad.com` host, so images uploaded through the **product description editor**
+> (also hosted there) are equally usable in the map.
+>
+> **YouTube embeds do NOT work** even though `frame-src` allows youtube/youtube-nocookie: the
+> page's `sandbox` lacks `allow-same-origin`, that restriction propagates into nested iframes,
+> and the YouTube player JS crashes (`writeEmbed is not defined`). Verified live — videos must
+> be plain-text pointers.
 
 ## Publishing to Gumroad
 
