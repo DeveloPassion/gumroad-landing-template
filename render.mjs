@@ -16,6 +16,9 @@
  *   --out <file>     output path (default: dist/<slug>.html)
  *   --ref <git-ref>  store-website ref to read from (default: main)
  *   --store <owner/repo>  store repo (default: DeveloPassion/store-website)
+ *   --local <path>   read product data from a local store-website checkout instead of
+ *                    GitHub raw (path to the repo root; reads <path>/src/data/products).
+ *                    Useful to render copy that isn't pushed yet.
  *   --site <url>     store site for absolute asset/link URLs (default: https://store.dsebastien.net)
  *   --template <file>  template shell (default: ./template.html next to this script)
  *
@@ -49,15 +52,52 @@ const TEMPLATE = opt('template', join(__dir, 'template.html'));
 // public-files.gumroad.com) via --cover so the hero image actually loads. Store-website
 // /assets images are external and are therefore omitted from the output.
 const COVER = opt('cover', '');
+const LOCAL = opt('local', '');
 const RAW = `https://raw.githubusercontent.com/${STORE}/${REF}/src/data/products`;
 
 // ---- fetch helpers ----
 async function getJson(file) {
+  if (LOCAL) {
+    try {
+      return JSON.parse(await readFile(join(LOCAL, 'src/data/products', file), 'utf8'));
+    } catch (e) {
+      if (e.code === 'ENOENT') return null;
+      throw e;
+    }
+  }
   const url = `${RAW}/${file}`;
   const res = await fetch(url);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Fetch ${url} -> ${res.status}`);
   return res.json();
+}
+
+// ---- store template tokens ----
+// Store copy embeds runtime tokens like ${stats.userCount}, ${computed.averageRating|round:1},
+// ${product.variants.0.price|currency}. The store site resolves them at render time; we must
+// do the same or they leak verbatim onto the Gumroad page. Unresolvable tokens are left as-is
+// (visible in review) rather than silently dropped.
+function interpolate(value, ctx) {
+  if (typeof value === 'string') {
+    return value.replace(/\$\{([^}|]+)(?:\|([^}]+))?\}/g, (m, path, filter) => {
+      const v = path
+        .trim()
+        .split('.')
+        .reduce((o, k) => (o == null ? undefined : o[k]), ctx);
+      if (v == null) return m;
+      let out = v;
+      if (filter) {
+        const [fname, farg] = filter.split(':');
+        if (fname === 'currency') out = `€${Number(v).toFixed(2)}`;
+        else if (fname === 'round') out = Number(v).toFixed(Number(farg ?? 0));
+      }
+      return String(out);
+    });
+  }
+  if (Array.isArray(value)) return value.map((x) => interpolate(x, ctx));
+  if (value && typeof value === 'object')
+    return Object.fromEntries(Object.entries(value).map(([k, x]) => [k, interpolate(x, ctx)]));
+  return value;
 }
 
 // ---- text / markdown ----
@@ -91,10 +131,27 @@ const cards3 = (items, render) =>
   `<div class="grid md:grid-cols-3 gap-5">${items.map(render).join('')}</div>`;
 
 // ---- builders (each returns '' when its data is absent) ----
+// One buy CTA per store variant (checkout opens pre-selected via data-gumroad-option),
+// falling back to a single generic buy button when the product has no variants.
+function buyCtas(p, label = 'Get it now') {
+  const variants = Array.isArray(p.variants) ? p.variants.filter((v) => v && v.name) : [];
+  if (variants.length > 1) {
+    return `<div class="flex flex-wrap gap-4 justify-center">${variants
+      .map((v) => {
+        const vp = v.priceDisplay || (v.price != null ? `€${v.price}` : '');
+        return `<a class="btn" data-gumroad-action="buy" data-gumroad-option="${esc(v.name)}">${esc(v.name)}${
+          vp ? ` &mdash; ${esc(vp)}` : ''
+        }</a>`;
+      })
+      .join('')}</div>`;
+  }
+  const price = p.priceDisplay || (p.price != null ? `€${p.price}` : '');
+  return `<a class="btn" data-gumroad-action="buy">${esc(label)} &mdash; <span data-gumroad-field="price">${esc(price)}</span></a>`;
+}
+
 function buildHero(p, sc, coverUrl) {
   const tagline = sc.tagline || p.name;
   const sub = sc.secondaryTagline || sc.description || p.shortDescription || '';
-  const price = p.priceDisplay || (p.price != null ? `€${p.price}` : '');
   // Only the product's own Gumroad cover (passed via --cover) — external hosts are blocked live.
   const img = coverUrl
     ? `<img src="${esc(coverUrl)}" alt="${esc(p.name)}" class="max-w-full rounded-2xl mt-10 mx-auto shadow-2xl">`
@@ -107,7 +164,7 @@ function buildHero(p, sc, coverUrl) {
   return `<section class="text-center px-5 pt-24 pb-16"><div class="max-w-3xl mx-auto">
     <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight mb-4" data-gumroad-field="name">${esc(tagline)}</h1>
     <p class="text-lg md:text-xl text-white/70 max-w-2xl mx-auto mb-7">${md(sub)}</p>
-    <a class="btn" data-gumroad-action="buy">Get it now &mdash; <span data-gumroad-field="price">${esc(price)}</span></a>
+    ${buyCtas(p)}
     ${badges}${img}
   </div></section>`;
 }
@@ -128,9 +185,23 @@ function buildPAS(sc) {
 }
 
 function buildStory(sc) {
-  const txt = sc.credibilityStory || sc.storytelling;
-  if (!txt) return '';
-  return section(`<div class="card"><p class="text-white/80">${md(txt)}</p></div>`);
+  const st = sc.credibilityStory || sc.storytelling;
+  if (!st) return '';
+  if (typeof st === 'string')
+    return section(`<div class="card"><p class="text-white/80">${md(st)}</p></div>`);
+  // store-website storytelling object: render the narrative blocks that carry prose
+  const blocks = [st.originStory, st.creatorJourney]
+    .filter((b) => b && b.story)
+    .map(
+      (b) =>
+        `<div class="card mb-4">${
+          b.title ? `<h3 class="text-xl font-bold mb-1">${esc(b.title)}</h3>` : ''
+        }${b.subtitle ? `<p class="text-brand-text font-bold mb-3">${esc(b.subtitle)}</p>` : ''}<p class="text-white/80">${md(
+          b.story
+        )}</p></div>`
+    )
+    .join('');
+  return blocks ? section(blocks) : '';
 }
 
 function buildList(title, arr, opts = {}) {
@@ -163,10 +234,20 @@ function buildBenefits(sc) {
 }
 
 function buildTransformation(sc) {
-  const t = sc.transformation;
+  // supports both the flat shape ({before: [...], after: [...]}) and the store-website
+  // storytelling.transformationArc shape ({before: {title, description, points}, after: {...}})
+  const t = sc.transformation || (sc.storytelling && sc.storytelling.transformationArc);
   if (!t || (!t.before && !t.after)) return '';
-  const col = (label, arr, color) =>
-    `<div class="card"><h3 class="text-xl font-bold mb-3" style="color:${color}">${esc(label)}</h3>${ul(arr)}</div>`;
+  const col = (label, v, color) => {
+    if (!v) return '';
+    const arr = Array.isArray(v) ? v : v.points;
+    const title = (!Array.isArray(v) && v.title) || label;
+    const desc =
+      !Array.isArray(v) && v.description
+        ? `<p class="text-white/80 mb-3">${md(v.description)}</p>`
+        : '';
+    return `<div class="card"><h3 class="text-xl font-bold mb-3" style="color:${color}">${esc(title)}</h3>${desc}${ul(arr)}</div>`;
+  };
   return section(
     `${h2('Before & after')}<div class="grid md:grid-cols-2 gap-5">${col('Before', t.before, '#ef4444')}${col(
       'After',
@@ -189,7 +270,9 @@ function buildAudience(sc) {
 
 function buildMediaGallery(media) {
   // Store-website /assets images are external (blocked live), so only YouTube link-outs are emitted.
-  const yts = (media || []).filter((m) => m.youtubeId);
+  const yts = (media || [])
+    .filter((m) => m.youtubeId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   if (!yts.length) return '';
   const ytHtml = yts
     .map(
@@ -199,7 +282,7 @@ function buildMediaGallery(media) {
         )}</a>`
     )
     .join('');
-  return section(`${h2('See it in action')}<div class="carousel">${imgHtml}${ytHtml}</div>`);
+  return section(`${h2('See it in action')}<div class="carousel">${ytHtml}</div>`);
 }
 
 function buildIncluded(p, children) {
@@ -246,8 +329,24 @@ function buildFaq(rows) {
   return section(`${h2('Questions')}${items}`);
 }
 
+function buildTimeline(sc) {
+  // flat array of strings/objects, or the store-website shape {title, milestones: [...]}
+  const t = sc.timeline;
+  if (!t) return '';
+  if (Array.isArray(t)) return buildList('Your timeline', t);
+  if (!Array.isArray(t.milestones) || !t.milestones.length) return '';
+  const items = t.milestones
+    .map(
+      (m) =>
+        `<div class="card mb-4"><h3 class="text-xl font-bold mb-1">${esc(
+          [m.timeframe, m.title].filter(Boolean).join(' — ')
+        )}</h3>${m.description ? `<p class="text-white/80 mb-2">${md(m.description)}</p>` : ''}${ul(m.highlights)}</div>`
+    )
+    .join('');
+  return section(`${h2(t.title || 'Your timeline')}${items}`);
+}
+
 function buildFinalCta(p, sc) {
-  const price = p.priceDisplay || (p.price != null ? `€${p.price}` : '');
   const headline = sc.tagline || p.name;
   const guarantees =
     Array.isArray(sc.guarantees) && sc.guarantees.length
@@ -255,24 +354,40 @@ function buildFinalCta(p, sc) {
       : '';
   return `<section class="px-5 py-16 text-center"><div class="max-w-3xl mx-auto">
     ${h2(`Ready? ${esc(headline)}`)}${guarantees}
-    <a class="btn" data-gumroad-action="buy">Get it now &mdash; <span data-gumroad-field="price">${esc(price)}</span></a>
+    ${buyCtas(p)}
   </div></section>`;
 }
 
 // ---- main ----
 async function main() {
   const product = await getJson(`${slug}.json`);
-  if (!product) throw new Error(`Product "${slug}" not found in ${STORE}@${REF}`);
+  if (!product) throw new Error(`Product "${slug}" not found in ${LOCAL || `${STORE}@${REF}`}`);
   const copyId = product.activeSalesCopyId || 'default';
-  const [salesRaw, testRaw, faqRaw, mediaRaw] = await Promise.all([
+  const [salesRaw, testRaw, faqRaw, mediaRaw, statsRaw] = await Promise.all([
     getJson(`${slug}-sales-copy-${copyId}.json`),
     getJson(`${slug}-testimonials.json`),
     getJson(`${slug}-faq.json`),
     getJson(`${slug}-media.json`),
+    getJson(`${slug}-stats.json`),
   ]);
-  const sc = (salesRaw && salesRaw.salesCopy) || {};
-  const testimonials = (testRaw && testRaw.data) || [];
-  const faq = (faqRaw && faqRaw.data) || [];
+
+  // token context: stats.*, product.*, computed.averageRating (mean across all rating sources)
+  const stats = (statsRaw && statsRaw.data) || {};
+  const allRatings = Object.values(stats.ratings || {})
+    .flat()
+    .map((r) => r && r.rating)
+    .filter((r) => typeof r === 'number');
+  const computed = {
+    averageRating: allRatings.length
+      ? allRatings.reduce((a, b) => a + b, 0) / allRatings.length
+      : undefined,
+    ratingCount: allRatings.length || undefined,
+  };
+  const ctx = { stats, product, computed };
+
+  const sc = interpolate((salesRaw && salesRaw.salesCopy) || {}, ctx);
+  const testimonials = interpolate((testRaw && testRaw.data) || [], ctx);
+  const faq = interpolate((faqRaw && faqRaw.data) || [], ctx);
   const media = (mediaRaw && mediaRaw.data) || [];
 
   // resolve included products (bundles)
@@ -292,7 +407,7 @@ async function main() {
     sc.courseContent ? buildList("What's inside", sc.courseContent) : '',
     buildBenefits(sc),
     buildTransformation(sc),
-    sc.timeline ? buildList('Your timeline', sc.timeline) : '',
+    buildTimeline(sc),
     buildList('Common misconceptions', sc.misconceptionBusters),
     buildAudience(sc),
     sc.adhdBenefit ? section(`<div class="card"><p class="text-white/80">${md(sc.adhdBenefit)}</p></div>`) : '',
