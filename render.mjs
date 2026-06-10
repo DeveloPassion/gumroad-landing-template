@@ -20,6 +20,10 @@
  *                    GitHub raw (path to the repo root; reads <path>/src/data/products).
  *                    Useful to render copy that isn't pushed yet.
  *   --site <url>     store site for absolute asset/link URLs (default: https://store.dsebastien.net)
+ *   --media-map <file>  JSON object mapping store media URL basenames (e.g. "osk-ai-base.webp")
+ *                    to the product's OWN Gumroad asset URLs (upload screenshots with
+ *                    `gumroad products covers add <id> --image <png>` → .result.covers[-1].url).
+ *                    Only mapped images are rendered — external image hosts are blocked live.
  *   --template <file>  template shell (default: ./template.html next to this script)
  *
  * No dependencies. Node >= 18 (global fetch). Never emits JS beyond the Tailwind runtime.
@@ -53,6 +57,7 @@ const TEMPLATE = opt('template', join(__dir, 'template.html'));
 // /assets images are external and are therefore omitted from the output.
 const COVER = opt('cover', '');
 const LOCAL = opt('local', '');
+const MEDIA_MAP_FILE = opt('media-map', '');
 const RAW = `https://raw.githubusercontent.com/${STORE}/${REF}/src/data/products`;
 
 // ---- fetch helpers ----
@@ -105,19 +110,16 @@ const esc = (s) =>
   String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 // Minimal inline markdown used in the store copy: **bold**, *italic*, `code`, [text](url).
-// Relative /product and /assets links are rewritten to absolute store URLs.
+// The Gumroad sandbox blocks ALL external link navigation, so [text](url) is flattened to
+// its label — a dead <a> is worse than plain text.
 function md(s) {
   let t = esc(s);
-  t = t.replace(/\[([^\]]+)\]\((\/[^)]+|https?:\/\/[^)]+)\)/g, (_, txt, url) => {
-    const abs = url.startsWith('/') ? `${SITE}${url}` : url;
-    return `<a href="${abs}">${txt}</a>`;
-  });
+  t = t.replace(/\[([^\]]+)\]\((?:\/[^)]+|https?:\/\/[^)]+)\)/g, '$1');
   t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   t = t.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
   t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
   return t;
 }
-const abs = (u) => (u && u.startsWith('/') ? `${SITE}${u}` : u);
 
 // ---- section helpers ----
 const section = (inner, cls = '') =>
@@ -268,21 +270,29 @@ function buildAudience(sc) {
   return section(`${h2('Is this for you?')}<div class="grid md:grid-cols-2 gap-5">${left}${right}</div>`);
 }
 
-function buildMediaGallery(media) {
-  // Store-website /assets images are external (blocked live), so only YouTube link-outs are emitted.
-  const yts = (media || [])
-    .filter((m) => m.youtubeId)
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  if (!yts.length) return '';
-  const ytHtml = yts
+function buildMediaGallery(media, mediaMap = {}) {
+  // The Gumroad sandbox blocks external image hosts AND external link navigation:
+  // - store /assets images can't load and YouTube link-outs are dead → neither is emitted
+  // - only images mapped (by URL basename) to the product's OWN Gumroad assets are rendered
+  const imgs = (media || [])
+    .filter((m) => m.type === 'image' && m.url)
+    .map((m) => ({ m, gum: mediaMap[m.url.split('/').pop()] }))
+    .filter((x) => x.gum)
+    .sort((a, b) => (a.m.order ?? 0) - (b.m.order ?? 0));
+  if (!imgs.length) return '';
+  const cards = imgs
     .map(
-      (m) =>
-        `<a href="https://www.youtube.com/watch?v=${esc(m.youtubeId)}" class="card flex items-center justify-center text-center !text-white">▶ ${esc(
-          m.title || 'Watch the video'
-        )}</a>`
+      ({ m, gum }) =>
+        `<figure class="card !p-3" style="margin:0"><img src="${esc(gum)}" alt="${esc(
+          m.altText || m.title || ''
+        )}" loading="lazy">${
+          m.title
+            ? `<figcaption class="text-white/70 text-sm mt-2 text-center">${esc(m.title)}</figcaption>`
+            : ''
+        }</figure>`
     )
     .join('');
-  return section(`${h2('See it in action')}<div class="carousel">${ytHtml}</div>`);
+  return section(`${h2('See it in action')}<div class="carousel">${cards}</div>`);
 }
 
 function buildIncluded(p, children) {
@@ -291,8 +301,8 @@ function buildIncluded(p, children) {
     .map((c) => {
       if (!c) return '';
       const price = c.priceDisplay || (c.price != null ? `€${c.price}` : '');
-      const href = c.dsebastienUrl || c.gumroadUrl || `${SITE}/product/${c.id}`;
-      return `<div class="card"><h3 class="text-lg font-bold mb-1"><a href="${href}">${esc(c.name)}</a></h3>${
+      // plain text, no anchor — the sandbox blocks external navigation
+      return `<div class="card"><h3 class="text-lg font-bold mb-1">${esc(c.name)}</h3>${
         price ? `<p class="text-brand-text font-bold">${esc(price)} value</p>` : ''
       }${c.shortDescription ? `<p class="text-white/70 mt-1">${md(c.shortDescription)}</p>` : ''}</div>`;
     })
@@ -389,6 +399,7 @@ async function main() {
   const testimonials = interpolate((testRaw && testRaw.data) || [], ctx);
   const faq = interpolate((faqRaw && faqRaw.data) || [], ctx);
   const media = (mediaRaw && mediaRaw.data) || [];
+  const mediaMap = MEDIA_MAP_FILE ? JSON.parse(await readFile(MEDIA_MAP_FILE, 'utf8')) : {};
 
   // resolve included products (bundles)
   let children = [];
@@ -411,7 +422,7 @@ async function main() {
     buildList('Common misconceptions', sc.misconceptionBusters),
     buildAudience(sc),
     sc.adhdBenefit ? section(`<div class="card"><p class="text-white/80">${md(sc.adhdBenefit)}</p></div>`) : '',
-    buildMediaGallery(media),
+    buildMediaGallery(media, mediaMap),
     buildIncluded(product, children),
     buildTestimonials(testimonials),
     buildFaq(faq),
