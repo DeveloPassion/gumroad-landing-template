@@ -35,6 +35,12 @@ Options:
 | `--youtube <text>` | (none) | YouTube channel shown as **copyable text** in the gallery section (e.g. `youtube.com/@dsebastien`) — the sandbox can't link out, so discovery happens via text |
 | `--videos <n>` | `3` | number of store videos listed as copyable `youtu.be/<id>` text in the gallery card |
 | `--testimonials <n>` | `0` (all) | cap the testimonial masonry wall |
+| `--early-shots <n>` | `2` | screenshots surfaced right below the hero/stats band (excluded from the later gallery) |
+
+Conversion structure baked in: variant buy buttons in the hero, sticky buybar, and final CTA; a
+"Choose your package" tier-comparison section (top tier badged "Best value"); CTA bands after the
+PAS block and after the testimonial wall; and a click-to-zoom lightbox on all screenshots
+(inline JS — survives the sanitizer).
 | `--template <file>` | `./template.html` | brand shell |
 
 No dependencies. Node ≥ 18 (global `fetch`).

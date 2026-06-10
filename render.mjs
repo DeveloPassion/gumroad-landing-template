@@ -67,6 +67,9 @@ const YOUTUBE = opt('youtube', '');
 const LIST_VIDEOS = parseInt(opt('videos', '3'), 10) || 0;
 // Max testimonials to render (0 = all). Social proof at full strength by default.
 const TESTIMONIALS = parseInt(opt('testimonials', '0'), 10) || 0;
+// Screenshots surfaced right below the hero/stats (store-website shows media early too).
+// These are taken from the FRONT of the mapped-image list and excluded from the gallery.
+const EARLY_SHOTS = parseInt(opt('early-shots', '2'), 10) || 0;
 const RAW = `https://raw.githubusercontent.com/${STORE}/${REF}/src/data/products`;
 
 // ---- fetch helpers ----
@@ -163,6 +166,40 @@ function buyCtas(p, label = 'Get it now') {
 function stars(avg) {
   if (typeof avg !== 'number') return '';
   return '★★★★★'.slice(0, Math.round(avg)) + '☆☆☆☆☆'.slice(0, 5 - Math.round(avg));
+}
+
+// Conversion: a compact CTA band to repeat the ask at decision points down the page.
+function ctaBand(p, sc, headline, sub = '') {
+  const reassure =
+    Array.isArray(sc.guarantees) && sc.guarantees.length
+      ? `<p class="text-white/60 text-sm mt-4">${md(sc.guarantees[0])}</p>`
+      : '';
+  return `<section class="px-5 py-12 text-center"><div class="max-w-3xl mx-auto">
+    <h2 class="text-2xl md:text-3xl font-extrabold tracking-tight mb-5">${esc(headline)}</h2>
+    ${sub ? `<p class="text-white/70 mb-5">${md(sub)}</p>` : ''}
+    ${buyCtas(p)}${reassure}
+  </div></section>`;
+}
+
+// Conversion: explicit tier comparison so the variant choice isn't only in the hero.
+// The top tier gets a "Best value" badge and highlight.
+function buildPricing(p, sc) {
+  const variants = Array.isArray(p.variants) ? p.variants.filter((v) => v && v.name) : [];
+  if (variants.length < 2) return '';
+  const best = variants.length - 1;
+  const cards = variants
+    .map((v, i) => {
+      const vp = v.priceDisplay || (v.price != null ? `€${v.price}` : '');
+      return `<div class="card text-center${i === best ? ' t-featured' : ''}" style="position:relative;padding-top:36px">
+        ${i === best ? `<span class="pill" style="position:absolute;top:-15px;left:50%;transform:translateX(-50%)">Best value</span>` : ''}
+        <h3 class="text-xl font-extrabold mb-1">${esc(v.name)}</h3>
+        <p class="statnum mb-3">${esc(vp)}</p>
+        ${v.description ? `<p class="text-white/75 mb-6">${md(v.description)}</p>` : ''}
+        <a class="btn" data-gumroad-action="buy" data-gumroad-option="${esc(v.name)}">Get ${esc(v.name)}</a>
+      </div>`;
+    })
+    .join('');
+  return section(`${h2('Choose your package')}<div class="grid md:grid-cols-2 gap-6 mt-4">${cards}</div>`);
 }
 
 function buildHero(p, sc, coverUrl, ctx = {}) {
@@ -356,6 +393,34 @@ function buildAudience(sc) {
   return section(`${h2('Is this for you?')}<div class="grid md:grid-cols-2 gap-5">${left}${right}</div>`);
 }
 
+function mappedImages(media, mediaMap) {
+  return (media || [])
+    .filter((m) => m.type === 'image' && m.url)
+    .map((m) => ({ m, gum: mediaMap[m.url.split('/').pop()] }))
+    .filter((x) => x.gum)
+    .sort((a, b) => (a.m.order ?? 0) - (b.m.order ?? 0));
+}
+
+function shotsHtml(list) {
+  return list
+    .map(
+      ({ m, gum }) =>
+        `<figure><img src="${esc(gum)}" alt="${esc(m.altText || m.title || '')}" loading="lazy">${
+          m.title
+            ? `<figcaption class="text-white/70 text-sm mt-2 text-center">${esc(m.title)}</figcaption>`
+            : ''
+        }</figure>`
+    )
+    .join('');
+}
+
+// A taste of the product right below the hero — first EARLY_SHOTS mapped images.
+function buildEarlyShots(media, mediaMap) {
+  const early = mappedImages(media, mediaMap).slice(0, EARLY_SHOTS);
+  if (!early.length) return '';
+  return `<section class="px-5 pb-6"><div class="max-w-3xl mx-auto"><div class="shots">${shotsHtml(early)}</div></div></section>`;
+}
+
 function buildMediaGallery(media, mediaMap = {}) {
   // Verified live CSP: img-src allows ALL of public-files.gumroad.com, frame-src allows
   // YouTube embeds — but <a> navigation to external sites is still blocked. So:
@@ -372,23 +437,8 @@ function buildMediaGallery(media, mediaMap = {}) {
          <code class="text-brand-text font-bold">youtu.be/${esc(m.youtubeId)}</code></li>`
     )
     .join('');
-  const imgs = (media || [])
-    .filter((m) => m.type === 'image' && m.url)
-    .map((m) => ({ m, gum: mediaMap[m.url.split('/').pop()] }))
-    .filter((x) => x.gum)
-    .sort((a, b) => (a.m.order ?? 0) - (b.m.order ?? 0));
-  const shots = imgs.length
-    ? `<div class="shots">${imgs
-        .map(
-          ({ m, gum }) =>
-            `<figure><img src="${esc(gum)}" alt="${esc(m.altText || m.title || '')}" loading="lazy">${
-              m.title
-                ? `<figcaption class="text-white/70 text-sm mt-2 text-center">${esc(m.title)}</figcaption>`
-                : ''
-            }</figure>`
-        )
-        .join('')}</div>`
-    : '';
+  const imgs = mappedImages(media, mediaMap).slice(EARLY_SHOTS);
+  const shots = imgs.length ? `<div class="shots">${shotsHtml(imgs)}</div>` : '';
   const yt =
     vidItems || YOUTUBE
       ? `<div class="card mt-6 text-center">
@@ -525,7 +575,9 @@ async function main() {
   const content = [
     buildHero(product, sc, COVER, ctx),
     buildStatsBand(ctx),
+    buildEarlyShots(media, mediaMap),
     buildPAS(sc),
+    ctaBand(product, sc, sc.tagline || `Get ${product.name}`),
     buildContents(product),
     buildStory(sc),
     sc.howItWorks && Array.isArray(sc.howItWorks) ? buildList('How it works', sc.howItWorks) : '',
@@ -534,6 +586,7 @@ async function main() {
     sc.courseContent ? buildList("Course content", sc.courseContent) : '',
     buildBenefits(sc),
     buildTransformation(sc),
+    buildPricing(product, sc),
     buildMethodology(sc),
     buildTimeline(sc),
     buildList('Common misconceptions', sc.misconceptionBusters),
@@ -543,6 +596,11 @@ async function main() {
     buildVision(sc),
     buildIncluded(product, children),
     buildTestimonials(testimonials),
+    ctaBand(
+      product,
+      sc,
+      ctx.stats && ctx.stats.userCount ? `Join ${ctx.stats.userCount} happy users` : 'Ready when you are'
+    ),
     buildFaq(faq),
     buildFinalCta(product, sc),
   ]
@@ -550,11 +608,23 @@ async function main() {
     .join('\n');
 
   const price = product.priceDisplay || (product.price != null ? `€${product.price}` : '');
+  // sticky bar: per-variant compact buttons when tiers exist, single button otherwise
+  const barVariants = Array.isArray(product.variants) ? product.variants.filter((v) => v && v.name) : [];
+  const buyBarCtas =
+    barVariants.length > 1
+      ? barVariants
+          .map((v) => {
+            const vp = v.priceDisplay || (v.price != null ? `€${v.price}` : '');
+            return `<a class="btn" style="padding:10px 20px" data-gumroad-action="buy" data-gumroad-option="${esc(
+              v.name
+            )}">${esc(v.name)}${vp ? ` · ${esc(vp)}` : ''}</a>`;
+          })
+          .join(' ')
+      : `<a class="btn" style="padding:10px 22px" data-gumroad-action="buy">Buy now &mdash; <span data-gumroad-field="price">${esc(price)}</span></a>`;
   let html = await readFile(TEMPLATE, 'utf8');
   html = html
     .replace('{{BUY_NAME}}', esc(product.name))
-    .replace('{{BUY_PRICE}}', esc(price))
-    .replace('{{BUY_CTA}}', 'Buy now')
+    .replace('{{BUY_BAR_CTAS}}', buyBarCtas)
     .replace('<!--PAGE_CONTENT-->', content);
 
   await mkdir(dirname(resolve(OUT)), { recursive: true });

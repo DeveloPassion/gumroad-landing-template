@@ -73,7 +73,13 @@
   @media (min-width:640px) { .shots { columns:2; } }
   .shots figure { margin:0 0 20px; background:#3f4957; border:1px solid rgba(255,255,255,.1);
                   border-radius:16px; padding:12px; break-inside:avoid; }
-  .shots img { width:100%; height:auto; border-radius:10px; display:block; }
+  .shots img { width:100%; height:auto; border-radius:10px; display:block; cursor:zoom-in; }
+  /* lightbox — inline-JS powered (script-src 'unsafe-inline' is allowed; verified live) */
+  .lb { position:fixed; inset:0; z-index:100; background:rgba(15,18,23,.93); display:none;
+        flex-direction:column; align-items:center; justify-content:center; padding:24px; cursor:zoom-out; }
+  .lb img { max-width:95vw; max-height:86vh; width:auto; height:auto; border-radius:12px;
+            box-shadow:0 12px 60px rgba(0,0,0,.65); }
+  .lb p { color:rgba(255,255,255,.85); margin-top:14px; font-size:.95rem; text-align:center; }
   /* NOTE: no YouTube embeds — frame-src allows them but the sandbox (no allow-same-origin)
      propagates into nested iframes and crashes the YouTube player. Videos go in as text. */
   /* testimonial masonry columns */
@@ -98,11 +104,37 @@
 </footer>
 <script>(function(){var y=document.getElementById('yr');if(y){try{y.textContent=new Date().getFullYear();}catch(e){}}})();</script>
 
-<!-- Sticky buy bar (pure CSS, no JS) -->
+<!-- Sticky buy bar (pure CSS, no JS) — one compact CTA per variant when the product has tiers -->
 <div class="buybar">
-  <span class="font-bold">{{BUY_NAME}} &mdash; <span data-gumroad-field="price">{{BUY_PRICE}}</span></span>
-  <a class="btn" data-gumroad-action="buy">{{BUY_CTA}}</a>
+  <span class="font-bold">{{BUY_NAME}}</span>
+  {{BUY_BAR_CTAS}}
 </div>
+
+<!-- Lightbox: click any .shots screenshot to enlarge; click anywhere / Escape to close -->
+<div id="lb" class="lb" role="dialog" aria-label="Image preview"><img id="lb-img" src="" alt=""><p id="lb-cap"></p></div>
+<script>
+(function () {
+  var lb = document.getElementById('lb');
+  var im = document.getElementById('lb-img');
+  var cap = document.getElementById('lb-cap');
+  if (!lb || !im) return;
+  function close() { lb.style.display = 'none'; document.body.style.overflow = ''; }
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t && t.tagName === 'IMG' && t.closest && t.closest('.shots')) {
+      im.src = t.src; im.alt = t.alt || '';
+      var f = t.closest('figure');
+      var c = f && f.querySelector('figcaption');
+      if (cap) cap.textContent = c ? c.textContent : '';
+      lb.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+    } else if (lb.style.display === 'flex' && (t === lb || (t.closest && t.closest('#lb')))) {
+      close();
+    }
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+})();
+</script>
 
 </body>
 </html>
