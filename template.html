@@ -44,6 +44,22 @@
          box-shadow:0 8px 24px rgba(229,0,125,.35); transition:transform .12s ease; }
   .btn:hover { transform:translateY(-2px); }
   .card { background:#3f4957; border:1px solid rgba(255,255,255,.1); border-radius:16px; padding:28px; }
+  /* alternating section tint for rhythm */
+  body > section:nth-of-type(even) { background:rgba(0,0,0,.16); }
+  /* hero glow — pure CSS, survives the sanitizer */
+  .hero-bg { background:
+      radial-gradient(60% 50% at 50% 0%, rgba(229,0,125,.28), transparent 70%),
+      radial-gradient(40% 35% at 80% 10%, rgba(255,20,147,.12), transparent 70%); }
+  /* list markers */
+  ul.checks, ul.crosses, ul.warns { list-style:none; padding-left:0; }
+  ul.checks li::before  { content:'✓'; color:#10b981; font-weight:800; margin-right:.55rem; }
+  ul.crosses li::before { content:'✗'; color:#ef4444; font-weight:800; margin-right:.55rem; }
+  ul.warns li::before   { content:'⚠'; color:#f59e0b; margin-right:.55rem; }
+  .kicker { display:inline-block; text-transform:uppercase; letter-spacing:.18em; font-size:.75rem;
+            font-weight:800; color:#ff1493; margin-bottom:14px; }
+  .statnum { font-size:2rem; font-weight:800; color:#ff1493; line-height:1.1; }
+  .pill { display:inline-block; background:rgba(229,0,125,.16); border:1px solid rgba(255,20,147,.45);
+          color:#ff8dc7; border-radius:999px; padding:6px 14px; font-size:.85rem; font-weight:700; }
   /* Pure-CSS scroll-snap carousel (no JS — verified to survive Gumroad sanitizer) */
   .carousel { display:flex; gap:16px; overflow-x:auto; scroll-snap-type:x mandatory;
               -webkit-overflow-scrolling:touch; padding:4px 0 12px; scroll-padding-left:0; }

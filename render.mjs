@@ -58,6 +58,8 @@ const TEMPLATE = opt('template', join(__dir, 'template.html'));
 const COVER = opt('cover', '');
 const LOCAL = opt('local', '');
 const MEDIA_MAP_FILE = opt('media-map', '');
+// Sandbox blocks outbound links, so the channel is surfaced as copyable TEXT, not an anchor.
+const YOUTUBE = opt('youtube', '');
 const RAW = `https://raw.githubusercontent.com/${STORE}/${REF}/src/data/products`;
 
 // ---- fetch helpers ----
@@ -125,7 +127,7 @@ function md(s) {
 const section = (inner, cls = '') =>
   inner ? `<section class="px-5 py-16 ${cls}"><div class="max-w-3xl mx-auto">${inner}</div></section>` : '';
 const h2 = (t) => `<h2 class="text-3xl font-extrabold tracking-tight text-center mb-8">${esc(t)}</h2>`;
-const ul = (arr, cls = '') =>
+const ul = (arr, cls = 'checks') =>
   Array.isArray(arr) && arr.length
     ? `<ul class="space-y-2 ${cls}">${arr.map((x) => `<li class="text-white/80">${md(x)}</li>`).join('')}</ul>`
     : '';
@@ -151,38 +153,114 @@ function buyCtas(p, label = 'Get it now') {
   return `<a class="btn" data-gumroad-action="buy">${esc(label)} &mdash; <span data-gumroad-field="price">${esc(price)}</span></a>`;
 }
 
-function buildHero(p, sc, coverUrl) {
+function stars(avg) {
+  if (typeof avg !== 'number') return '';
+  return '★★★★★'.slice(0, Math.round(avg)) + '☆☆☆☆☆'.slice(0, 5 - Math.round(avg));
+}
+
+function buildHero(p, sc, coverUrl, ctx = {}) {
   const tagline = sc.tagline || p.name;
   const sub = sc.secondaryTagline || sc.description || p.shortDescription || '';
   // Only the product's own Gumroad cover (passed via --cover) — external hosts are blocked live.
   const img = coverUrl
-    ? `<img src="${esc(coverUrl)}" alt="${esc(p.name)}" class="max-w-full rounded-2xl mt-10 mx-auto shadow-2xl">`
+    ? `<img src="${esc(coverUrl)}" alt="${esc(p.name)}" class="max-w-full rounded-2xl mt-12 mx-auto shadow-2xl" style="box-shadow:0 24px 80px rgba(229,0,125,.25)">`
     : '';
   const badges = Array.isArray(sc.trustBadges) && sc.trustBadges.length
-    ? `<div class="flex flex-wrap gap-3 justify-center mt-6">${sc.trustBadges
-        .map((b) => `<span class="card !py-2 !px-4 text-sm text-white/80">${md(b)}</span>`)
+    ? `<div class="flex flex-wrap gap-3 justify-center mt-7">${sc.trustBadges
+        .map((b) => `<span class="pill">${md(b)}</span>`)
         .join('')}</div>`
     : '';
-  return `<section class="text-center px-5 pt-24 pb-16"><div class="max-w-3xl mx-auto">
+  const avg = ctx.computed && ctx.computed.averageRating;
+  const proofBits = [
+    avg ? `<span class="text-amber-400">${stars(avg)}</span> ${avg.toFixed(1)}/5 (${ctx.computed.ratingCount} ratings)` : '',
+    ctx.stats && ctx.stats.userCount ? `${esc(ctx.stats.userCount)} users` : '',
+  ].filter(Boolean);
+  const proof = proofBits.length
+    ? `<p class="text-white/70 text-sm mt-5">${proofBits.join(' &nbsp;·&nbsp; ')}</p>`
+    : '';
+  return `<section class="hero-bg text-center px-5 pt-24 pb-16"><div class="max-w-3xl mx-auto">
+    <span class="kicker">${esc(p.name)}</span>
     <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight mb-4" data-gumroad-field="name">${esc(tagline)}</h1>
-    <p class="text-lg md:text-xl text-white/70 max-w-2xl mx-auto mb-7">${md(sub)}</p>
+    <p class="text-lg md:text-xl text-white/70 max-w-2xl mx-auto mb-8">${md(sub)}</p>
     ${buyCtas(p)}
-    ${badges}${img}
+    ${proof}${badges}${img}
   </div></section>`;
 }
 
+function buildStatsBand(ctx) {
+  const cells = [];
+  if (ctx.stats && ctx.stats.userCount)
+    cells.push(`<div class="card text-center"><div class="statnum">${esc(ctx.stats.userCount)}</div><div class="text-white/70 mt-1">happy users</div></div>`);
+  if (ctx.computed && ctx.computed.averageRating)
+    cells.push(`<div class="card text-center"><div class="statnum">${ctx.computed.averageRating.toFixed(1)}/5</div><div class="text-white/70 mt-1">average rating <span class="text-amber-400">${stars(ctx.computed.averageRating)}</span></div></div>`);
+  if (ctx.stats && ctx.stats.timeSaved) {
+    // lead with the first numeric chunk ("100+"), keep the rest as the label — no emoji
+    // (emoji glyphs are font-dependent and can render as tofu boxes)
+    const mTime = String(ctx.stats.timeSaved).match(/^([\d,.]+\+?)\s*(.*)$/);
+    const num = mTime ? mTime[1] : '—';
+    const rest = mTime ? mTime[2] : String(ctx.stats.timeSaved);
+    cells.push(`<div class="card text-center"><div class="statnum">${esc(num)}</div><div class="text-white/70 mt-1">${esc(rest)} saved</div></div>`);
+  }
+  if (!cells.length) return '';
+  return `<section class="px-5 py-10"><div class="max-w-3xl mx-auto"><div class="grid md:grid-cols-${Math.min(cells.length, 3)} gap-5">${cells.join('')}</div></div></section>`;
+}
+
+function buildContents(p) {
+  if (!Array.isArray(p.contents) || !p.contents.length) return '';
+  const half = Math.ceil(p.contents.length / 2);
+  const col = (items) => `<div class="card">${ul(items)}</div>`;
+  return section(
+    `${h2("What's inside")}<div class="grid md:grid-cols-2 gap-5">${col(p.contents.slice(0, half))}${col(
+      p.contents.slice(half)
+    )}</div>`
+  );
+}
+
+function buildMethodology(sc) {
+  const m = sc.storytelling && sc.storytelling.methodology;
+  if (!m || !Array.isArray(m.steps) || !m.steps.length) return '';
+  const cards = m.steps
+    .map(
+      (s) =>
+        `<div class="card">${s.icon ? `<div class="text-3xl mb-2">${esc(s.icon)}</div>` : ''}<h3 class="text-lg font-bold mb-2">${esc(
+          s.title
+        )}</h3><p class="text-white/75 text-sm">${md(s.description)}</p></div>`
+    )
+    .join('');
+  const extras = [m.philosophy, m.differentiation]
+    .filter(Boolean)
+    .map((t) => `<p class="text-white/80 mt-6 max-w-2xl mx-auto text-center">${md(t)}</p>`)
+    .join('');
+  return section(`${h2(m.title || 'The philosophy')}<div class="grid md:grid-cols-3 gap-5">${cards}</div>${extras}`);
+}
+
+function buildVision(sc) {
+  const v = sc.storytelling && sc.storytelling.vision;
+  if (!v || !Array.isArray(v.values) || !v.values.length) return '';
+  const cards = v.values
+    .map(
+      (x) =>
+        `<div class="card">${x.icon ? `<div class="text-3xl mb-2">${esc(x.icon)}</div>` : ''}<h3 class="text-lg font-bold mb-2">${esc(
+          x.title
+        )}</h3><p class="text-white/75 text-sm">${md(x.description)}</p></div>`
+    )
+    .join('');
+  const mission = v.mission ? `<p class="text-white/80 mb-8 max-w-2xl mx-auto text-center">${md(v.mission)}</p>` : '';
+  return section(`${h2(v.title || 'Where this takes you')}${mission}<div class="grid md:grid-cols-2 gap-5">${cards}</div>`);
+}
+
 function buildPAS(sc) {
-  const block = (label, color, text, points) => {
+  const block = (label, color, text, points, marker) => {
     if (!text && !(points && points.length)) return '';
     return `<div class="card mb-4 border-l-4" style="border-left-color:${color}">
       <h3 class="text-xl font-bold mb-2">${esc(label)}</h3>
-      ${text ? `<p class="text-white/80 mb-3">${md(text)}</p>` : ''}${ul(points)}
+      ${text ? `<p class="text-white/80 mb-3">${md(text)}</p>` : ''}${ul(points, marker)}
     </div>`;
   };
   const inner =
-    block('The problem', '#ef4444', sc.problem, sc.problemPoints) +
-    block('Why it hurts', '#f59e0b', sc.agitate, sc.agitatePoints) +
-    block('The solution', '#10b981', sc.solution, sc.solutionPoints);
+    block('The problem', '#ef4444', sc.problem, sc.problemPoints, 'crosses') +
+    block('Why it hurts', '#f59e0b', sc.agitate, sc.agitatePoints, 'warns') +
+    block('The solution', '#10b981', sc.solution, sc.solutionPoints, 'checks');
   return inner.trim() ? section(inner) : '';
 }
 
@@ -240,7 +318,7 @@ function buildTransformation(sc) {
   // storytelling.transformationArc shape ({before: {title, description, points}, after: {...}})
   const t = sc.transformation || (sc.storytelling && sc.storytelling.transformationArc);
   if (!t || (!t.before && !t.after)) return '';
-  const col = (label, v, color) => {
+  const col = (label, v, color, marker) => {
     if (!v) return '';
     const arr = Array.isArray(v) ? v : v.points;
     const title = (!Array.isArray(v) && v.title) || label;
@@ -248,24 +326,25 @@ function buildTransformation(sc) {
       !Array.isArray(v) && v.description
         ? `<p class="text-white/80 mb-3">${md(v.description)}</p>`
         : '';
-    return `<div class="card"><h3 class="text-xl font-bold mb-3" style="color:${color}">${esc(title)}</h3>${desc}${ul(arr)}</div>`;
+    return `<div class="card"><h3 class="text-xl font-bold mb-3" style="color:${color}">${esc(title)}</h3>${desc}${ul(arr, marker)}</div>`;
   };
   return section(
-    `${h2('Before & after')}<div class="grid md:grid-cols-2 gap-5">${col('Before', t.before, '#ef4444')}${col(
+    `${h2('Before & after')}<div class="grid md:grid-cols-2 gap-5">${col('Before', t.before, '#ef4444', 'crosses')}${col(
       'After',
       t.after,
-      '#10b981'
+      '#10b981',
+      'checks'
     )}</div>`
   );
 }
 
 function buildAudience(sc) {
-  const col = (label, arr, color) =>
+  const col = (label, arr, color, marker) =>
     Array.isArray(arr) && arr.length
-      ? `<div class="card"><h3 class="text-xl font-bold mb-3" style="color:${color}">${esc(label)}</h3>${ul(arr)}</div>`
+      ? `<div class="card"><h3 class="text-xl font-bold mb-3" style="color:${color}">${esc(label)}</h3>${ul(arr, marker)}</div>`
       : '';
-  const left = col('Perfect for you if…', sc.perfectFor || sc.targetAudience, '#10b981');
-  const right = col('Not for you if…', sc.notForYou, '#ef4444');
+  const left = col('Perfect for you if…', sc.perfectFor || sc.targetAudience, '#10b981', 'checks');
+  const right = col('Not for you if…', sc.notForYou, '#ef4444', 'crosses');
   if (!left && !right) return '';
   return section(`${h2('Is this for you?')}<div class="grid md:grid-cols-2 gap-5">${left}${right}</div>`);
 }
@@ -292,7 +371,13 @@ function buildMediaGallery(media, mediaMap = {}) {
         }</figure>`
     )
     .join('');
-  return section(`${h2('See it in action')}<div class="carousel">${cards}</div>`);
+  // The sandbox can't link out, so the channel is shown as copyable text people can type.
+  const yt = YOUTUBE
+    ? `<div class="card text-center mt-6"><p class="text-white/90 font-bold mb-1">▶ Want full video walkthroughs?</p>
+       <p class="text-white/75">Find me on YouTube: <code class="text-brand-text font-bold">${esc(YOUTUBE)}</code></p>
+       <p class="text-white/50 text-sm mt-1">(type it in your browser — this page can't link out)</p></div>`
+    : '';
+  return section(`${h2('See it in action')}<div class="carousel">${cards}</div>${yt}`);
 }
 
 function buildIncluded(p, children) {
@@ -409,20 +494,24 @@ async function main() {
 
   // section order mirrors store-website product.tsx
   const content = [
-    buildHero(product, sc, COVER),
+    buildHero(product, sc, COVER, ctx),
+    buildStatsBand(ctx),
     buildPAS(sc),
+    buildContents(product),
     buildStory(sc),
-    sc.howItWorks ? buildList('How it works', sc.howItWorks) : '',
+    sc.howItWorks && Array.isArray(sc.howItWorks) ? buildList('How it works', sc.howItWorks) : '',
     buildList('Highlights', sc.highlights),
     buildList('What you get', sc.whatYouGet),
-    sc.courseContent ? buildList("What's inside", sc.courseContent) : '',
+    sc.courseContent ? buildList("Course content", sc.courseContent) : '',
     buildBenefits(sc),
     buildTransformation(sc),
+    buildMethodology(sc),
     buildTimeline(sc),
     buildList('Common misconceptions', sc.misconceptionBusters),
     buildAudience(sc),
     sc.adhdBenefit ? section(`<div class="card"><p class="text-white/80">${md(sc.adhdBenefit)}</p></div>`) : '',
     buildMediaGallery(media, mediaMap),
+    buildVision(sc),
     buildIncluded(product, children),
     buildTestimonials(testimonials),
     buildFaq(faq),

@@ -32,6 +32,7 @@ Options:
 | `--cover <url>` | (none) | the product's **own Gumroad cover** for the hero (`gumroad products view <id>` → `.product.covers[0].url`). Needed for a hero image — external/store image hosts are blocked live. |
 | `--local <path>` | (none) | read product data from a local store-website checkout instead of GitHub raw (renders copy that isn't pushed yet) |
 | `--media-map <file>` | (none) | JSON mapping store media URL basenames (e.g. `"osk-ai-base.webp"`) to the product's **own** Gumroad asset URLs — enables a real screenshot gallery (see below) |
+| `--youtube <text>` | (none) | YouTube channel shown as **copyable text** in the gallery section (e.g. `youtube.com/@dsebastien`) — the sandbox can't link out, so discovery happens via text |
 | `--template <file>` | `./template.html` | brand shell |
 
 No dependencies. Node ≥ 18 (global `fetch`).
